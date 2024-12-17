@@ -1,0 +1,28 @@
+## Installation
+1. Clone this repository.
+2. Ensure you have Python 3.8 or higher installed.
+3. Go to Code Directory, Open Terminal, Install required dependencies:
+pip install -r requirements.txt
+
+## Usage
+1. Prepare the input file (`input.txt`) containing ULD and package details. The format should be as follows:
+
+<cost of splitting priority packages>
+<number of ULDs>
+<ULD_ID>,<length>,<width>,<height>,<weight_limit>
+...
+<number of packages>
+<package_ID>,<length>,<width>,<height>,<weight>,<type>,<cost>
+...
+
+2. Run the main script:
+python FedEx.py
+
+3. Wait for the code to finish computation.
+
+4. output.txt file will be generated.
+
+
+ADDITIONAL.
+1. Visualization of 3D packing will be shown on finish of output.
+2. A graph representing cost optimization and volume optimization parameter to actual cost will be shown.

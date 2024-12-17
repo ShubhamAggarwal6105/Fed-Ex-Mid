@@ -1,8 +1,12 @@
+#IMPORTING MODULES
 from rectpack import newPacker
 from itertools import permutations
 import os
 from multiprocessing import Pool, freeze_support
+import numpy as np
+import random
 
+# ULD Container Module
 class ULDContainer:
     def __init__(self, uld_id, height, width, length, weight):
         self.uld_id = uld_id
@@ -13,6 +17,7 @@ class ULDContainer:
     def volume(self):
         return self.height * self.width * self.length
 
+# Package Module
 class Package:
     def __init__(self, package_id, length, width, height, weight, package_type, cost):
         self.package_id = package_id
@@ -25,6 +30,7 @@ class Package:
     def volume(self):
         return self.height * self.width * self.length
 
+# Function to choose height as dimension of each package, so as to maximimze packages with similar heights.
 def similar_height_sorting(packages):
     n = len(packages)
     max_height = max(max(p.height, p.length, p.width) for p in packages)
@@ -55,6 +61,7 @@ def similar_height_sorting(packages):
         index_list.sort(key = lambda a: len(a[1]), reverse=True)
     return sorted(sorted_packages, key=lambda p: (p.height, p.volume))
 
+# Sorts based on height as the smallest dimension parameter
 def least_height_sorting(packages):
     n = len(packages)
     sorted_packages = []
@@ -63,17 +70,20 @@ def least_height_sorting(packages):
         sorted_packages.append(Package(p.package_id, c, b, a, p.weight, p.type, p.cost))
     return sorted(sorted_packages, key=lambda p: (p.height, p.volume))
 
+# Package Loader Module
 class PackageLoader:
+    # Intializing Packer
     def __init__(self, uld_containers, priority_packages, economy_packages):
-        # self.uld_containers = sorted(uld_containers, key=lambda u: u.volume, reverse=True)
         self.uld_containers = uld_containers
         self.priority_packages = sorted(priority_packages, key=lambda p: (p.height, p.volume))
         self.economy_packages = sorted(economy_packages, key=lambda p: (p.height, p.volume))
         self.reached_heights = [0] * len(self.uld_containers)
+        self.weights = [u.weight for u in self.uld_containers]
         self.heights = [[] for i in range(len(self.uld_containers))]
         self.packed = [[] for i in range(len(self.uld_containers))]
         self.coordinates = [[] for i in range(len(self.uld_containers))]
 
+    # The loading function to implement greedy loading according to given package permutation
     def _load_single_run(self, packages):
         curr_uld = 0
         reached_height = self.reached_heights[curr_uld]
@@ -91,20 +101,22 @@ class PackageLoader:
             packer.add_bin(self.uld_containers[curr_uld].length, self.uld_containers[curr_uld].width)
             packed = []
             package_tried = 0
+            package_tried_weight = 0
 
             curr = 0
             while curr < len(packages) and package_tried == len(packed):
                 curr_height = packages[curr].height
 
-                if reached_height + curr_height > self.uld_containers[curr_uld].height:
+                if reached_height + curr_height > self.uld_containers[curr_uld].height or package_tried_weight + packages[curr].weight > self.weights[curr_uld]:
                     curr_uld += 1
                     uld_changed = True
                     break
                 
                 while curr < len(packages):
                     package = packages[curr]
-                    if package.height == curr_height:
+                    if package.height == curr_height and package_tried_weight + package.weight <= self.weights[curr_uld]:
                         package_tried += 1
+                        package_tried_weight += package.weight
                         packer.add_rect(package.width, package.length, curr)
                         curr += 1
                     else:
@@ -114,6 +126,7 @@ class PackageLoader:
                 packed = packer.rect_list()
 
             for _, x, y, w, h, idx in packed:
+                self.weights[curr_uld-int(uld_changed)] -= packages[idx].weight
                 self.coordinates[curr_uld-int(uld_changed)].append([packages[idx], ((x,y,reached_height), (x+w,y+h,reached_height+packages[idx].height))])
 
             self.heights[curr_uld-int(uld_changed)].append(max([0]+[packages[idx].height for _,x,y,w,h,idx in packed]))
@@ -146,22 +159,28 @@ class PackageLoader:
     def load_economy_packages(self):
         return self._load_single_run(self.economy_packages)
 
+    # Function to fix weight constraints
     def fix_weight_constraint(self):
         removed = []
-        for curr in range(len(self.uld_containers)):
-            packages = self.packed[curr]
-            max_weight = self.uld_containers[curr].weight
-            curr_weight = sum(pkg.weight for pkg in packages)
-            if curr_weight <= max_weight: continue
-            packages.sort(key = lambda p: (int(p.type=='Economy'), p.weight, -p.cost))
-            while curr_weight > max_weight:
-                p = packages.pop()
-                removed.append(p)
-                curr_weight -= p.weight
-            self.economy_packages = packages
-            self.load_economy_packages()
+        packages = self.packed[0]
+        max_weight = self.uld_containers[0].weight
+        curr_weight = sum(pkg.weight for pkg in packages)
+        if curr_weight <= max_weight: return []
+        print("Fixing Weight")
+        packages.sort(key = lambda p: (int(p.type=='Economy'), p.weight, -p.cost))
+        while curr_weight > max_weight:
+            p = packages.pop()
+            removed.append(p)
+            curr_weight -= p.weight
+        self.packed[0] = []
+        self.reached_heights[0] = 0
+        self.coordinates[0] = []
+        self.economy_packages = packages
+        self.load_economy_packages()
+        for p in self.economy_packages: removed.append(p)
         return removed
             
+    # Function to finally compress all packages to give correct coordinates
     def push_packages(self):
         for curr in range(len(self.uld_containers)):
             ## Find correct orientation of original ULD
@@ -190,7 +209,7 @@ class PackageLoader:
             self.uld_containers[curr] = curr_uld
             new_coordinates = []
             coordinates.sort(key = lambda a: min(a[1][0][2], a[1][1][2]))
-            grid = [[[[0] for i in range(self.uld_containers[curr].height)] for j in range(self.uld_containers[curr].width)] for k in range(self.uld_containers[curr].length)]
+            grid = np.zeros((curr_uld.length, curr_uld.width, curr_uld.height))
             for pkg, coordinate in coordinates:
                 l1,b1,h1 = coordinate[0]
                 l2,b2,h2 = coordinate[1]
@@ -198,21 +217,11 @@ class PackageLoader:
                 b1,b2 = sorted([b1,b2])
                 h1,h2 = sorted([h1,h2])
                 while h1 > 0:
-                    flag = True
-                    for l in range(l1,l2):
-                        for b in range(b1,b2):
-                            if grid[l][b][h1-1]==1:
-                                flag = False
-                                break
-                    if flag:
-                        h1 -= 1
-                        h2 -= 1
-                    else:
+                    if np.any(grid[l1:l2,b1:b2,h1-1]):
                         break
-                for l in range(l1,l2):
-                    for b in range(b1,b2):
-                        for h in range(h1,h2):
-                            grid[l][b][h] = 1
+                    h1 -= 1
+                    h2 -= 1
+                grid[l1:l2,b1:b2,h1:h2] = 1
                 new_coordinates.append([pkg, ((l1,b1,h1), (l2,b2,h2))])
             self.coordinates[curr] = new_coordinates
 
@@ -220,6 +229,7 @@ class PackageLoader:
         total_uld_volume = sum(uld.volume for uld in self.uld_containers)
         return total_uld_volume - packed_volume
 
+# Reads File Input
 def read_input(file_path):
     with open(file_path, "r") as f:
         k = int(f.readline().strip())
@@ -228,7 +238,7 @@ def read_input(file_path):
         uld_containers = []
         for _ in range(num_uld):
             uld_id, length, width, height, weight = f.readline().strip().split(",")
-            uld_containers.append(ULDContainer(uld_id, int(length), int(width), int(height), int(weight)))
+            uld_containers.append(ULDContainer(uld_id, int(height), int(width), int(length), int(weight)))
 
         num_packages = int(f.readline().strip())
         priority_packages, economy_packages = [], []
@@ -253,14 +263,16 @@ def read_input(file_path):
 
         return k, uld_containers, priority_packages, economy_packages
     
+# The greedy packing function
 def greedy_packing(l, r):
     min_cost = INF
-    best_loaders = None
+    bestest_loaders = None
+    minimum_priority_split = len(uld_containers_file_input)
     costs = [0]*(r-l)
     for check in range(l,r):
         print("Running task", check)
 
-        economy_packages_input = sorted(economy_packages_file_input, key=lambda p: p.cost / p.volume, reverse=True)[:check]
+        economy_packages_input = economy_packages_file_input[:check]
 
         priority_packages_input = similar_height_sorting(priority_packages_file_input)
         economy_packages_input = similar_height_sorting(economy_packages_input)
@@ -268,6 +280,8 @@ def greedy_packing(l, r):
         total_trying = len(economy_packages_input) + len(priority_packages_input)
 
         m_cost = INF
+        best_loaders = None
+        min_priority_split = len(uld_containers_file_input)
         for ulds in uld_permutations:
             priority_packages = priority_packages_input
             economy_packages = economy_packages_input
@@ -278,6 +292,9 @@ def greedy_packing(l, r):
             loaders = [None]*len(ulds)
             for i in range(len(ulds)):
                 loader1 = PackageLoader([ULDContainer(ulds[i].uld_id, ulds[i].length, ulds[i].width, ulds[i].height, ulds[i].weight)], priority_packages, economy_packages)
+                
+                len(priority_packages)
+
                 priority_volume1 = loader1.load_priority_packages()
                 economy_volume1 = loader1.load_economy_packages()
                 packed_count_1 = total_trying - len(loader1.priority_packages) - len(loader1.economy_packages)
@@ -314,7 +331,6 @@ def greedy_packing(l, r):
                 total_priority_volume += priority_volume
                 total_economy_volume += economy_volume
 
-
             economy_packages += economy_packages_file_input[check:]
             
             # Optimization 1
@@ -329,7 +345,6 @@ def greedy_packing(l, r):
 
             for i in range(len(loaders)):
                 while len(economy_packages) > 0:
-                    loaders[i].economy_packages = []
                     packages = loaders[i].packed[0].copy()
                     packages.append(economy_packages[-1])
                     packages = similar_height_sorting(packages)
@@ -356,15 +371,21 @@ def greedy_packing(l, r):
             if total_cost < m_cost:
                 best_loaders = loaders
                 m_cost = total_cost
+                min_priority_split = total_priority_split
 
         costs[check-l] = m_cost
-        min_cost = min(min_cost, m_cost)
-    return min_cost, best_loaders, costs
+
+        if m_cost < min_cost:
+            min_cost = m_cost
+            bestest_loaders = best_loaders
+            minimum_priority_split = min_priority_split
+    return min_cost, bestest_loaders, costs, minimum_priority_split
 
 INF = 10**10
 
 file_path = "input.txt"
 k, uld_containers_file_input, priority_packages_file_input, economy_packages_file_input = read_input(file_path)
+economy_packages_file_input = sorted(economy_packages_file_input, key=lambda p: p.cost / p.volume, reverse=True)
 
 uld_permutations = list(permutations(uld_containers_file_input))
 
@@ -383,18 +404,22 @@ while i < l:
             l -= 1
         else:
             j += 1
-        i+=1
+    i+=1
 
-## THREADING
+# Limiting Permutations
+if len(uld_permutations) > 720:
+    uld_permutations = random.sample(uld_permutations, 500)
+
+## Main Function
 if __name__ == "__main__":
     freeze_support()
 
     print("Initializing Algorithm")
-    cost, loader, _ = greedy_packing(len(economy_packages_file_input), len(economy_packages_file_input)+1)
+    cost, loader, _, ps = greedy_packing(len(economy_packages_file_input), len(economy_packages_file_input)+1)
     print(_)
 
-    end = sum(len(l.coordinates[0]) for l in loader) - len(priority_packages_file_input)
-    start = max(end-50, 1)
+    end = sum(len(l.coordinates[0]) for l in loader) - len(priority_packages_file_input) + 50
+    start = max(end-100, 1)
 
     threads = end - start
 
@@ -407,9 +432,9 @@ if __name__ == "__main__":
     with Pool(cpu_threads) as pool:
         results = pool.starmap(greedy_packing, divisions)
 
-    min_cost, best_loaders, _ = min(results, key=lambda x: x[0])
+    min_cost, best_loaders, _, min_priority_split = min(results, key=lambda x: x[0])
     costs = []
-    for _, __, cost in results:
+    for _, __, cost, ps in results:
         costs += cost
     ## ----------
 
@@ -418,32 +443,28 @@ if __name__ == "__main__":
         loader.push_packages()
         loader.coordinates[0].sort(key = lambda p: int(p[0].package_id[2:]))
         
-    answer = ""
+    alloted = [f"P-{i+1},NONE,-1,-1,-1,-1,-1,-1" for i in range(len(economy_packages_file_input)+len(priority_packages_file_input))]
     total_packed_volume = 0
     max_packed_count = 0
     for loader in best_loaders:
         curr_uld = loader.uld_containers[0]
-        answer += f"ULD {curr_uld.uld_id} : ({curr_uld.length}, {curr_uld.width}, {curr_uld.height})\n"
         for package, coordinates in loader.coordinates[0]:
             total_packed_volume += package.volume
             max_packed_count += 1
-            answer += f"Packed {package.type} {package.package_id} : {coordinates[0]} - {coordinates[1]}\n"
-        answer += "\n"
+            ID = int(package.package_id[2:])-1
+            a,b,c = coordinates[0]
+            d,e,f = coordinates[1]
+            alloted[ID] = f"{package.package_id},{curr_uld.uld_id},{a},{b},{c},{d},{e},{f}"
 
     total_volume = sum(uld.height*uld.length*uld.width for uld in uld_containers_file_input)
+    
+    stats = f"{min_cost},{max_packed_count},{min_priority_split}\n"
+    answer = "\n".join(alloted)
 
-    stats = ""
-    stats += f"Minimum Cost    : {min_cost}\n"
-    stats += f"Packages packed : {max_packed_count}\n"
-    stats += f"Volume Packed   : {total_packed_volume}/{total_volume}\n"
-    stats += f"Packing Eff.    : {int(10000*total_packed_volume/total_volume)/100}%\n"
-    stats += "\n"
+    output = stats+answer
 
-    with open("answer.txt",'w') as f:
-        f.write(answer)
-
-    with open("stats.txt",'w') as f:
-        f.write(stats)
+    with open("output.txt",'w') as f:
+        f.write(output)
 
     cost_string = ""
     for i in range(threads):
@@ -451,7 +472,8 @@ if __name__ == "__main__":
     with open("costs.txt",'w') as f:
         f.write(cost_string)
 
-    print(stats + answer)
+    print(output)
 
     from plotter import plot_cost_vs_optimization
     plot_cost_vs_optimization(costs, start)
+    import visualize

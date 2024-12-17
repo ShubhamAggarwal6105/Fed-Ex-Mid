@@ -1,5 +1,0 @@
-Minimum Cost    : 29083
-Packages packed : 253
-Volume Packed   : 81877833/105171504
-Packing Eff.    : 77.85%
-

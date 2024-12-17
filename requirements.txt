@@ -1,2 +1,7 @@
 rectpack
 matplotlib
+numpy
+os
+itertools
+multiprocessing
+random
